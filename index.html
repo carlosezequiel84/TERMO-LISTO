@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<!--
+  PLANTILLA WEBAR GENÉRICA — sirve para CUALQUIER objeto (no solo comida)
+  =========================================================================
+  Cómo usarla para un objeto nuevo (nunca hace falta tocar el código):
+    1) Reemplazá assets/target.mind por el marcador de ESE objeto (Paso 1 de la guía)
+    2) Reemplazá assets/modelo.glb por el modelo comprimido de ESE objeto (Paso 2)
+    3) Editá SOLO los 3 valores marcados como "CAMBIAR AQUÍ" más abajo:
+         - MODEL_REAL_SIZE_METERS -> tamaño real del objeto en metros
+         - MODEL_Y_OFFSET         -> por si el modelo queda "flotando" o hundido
+         - MODEL_ROTATION_Y       -> por si el modelo mira para el lado equivocado
+    4) Subís la carpeta entera a una carpeta nueva en tu repo de GitHub (ej: escultura-1/)
+       y listo, ya tenés un QR nuevo e independiente para ese objeto.
+
+  No hay nada más que programar. Este archivo es siempre el mismo para
+  todos tus objetos, solo cambian los assets y esos 3 números.
+-->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Experiencia AR</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background:#000; }
+    #container { position: fixed; inset: 0; }
+
+    #overlay {
+      position: fixed; inset: 0; background: #0a0a0a; color: #fff;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: -apple-system, sans-serif; z-index: 999; gap: 16px; text-align:center; padding: 24px;
+    }
+    #bar-track { width: 220px; height: 6px; background: #333; border-radius: 4px; overflow: hidden; }
+    #bar-fill { width: 0%; height: 100%; background: #fff; transition: width .15s; }
+    #pct { font-size: 14px; opacity: .7; }
+    #hint { font-size: 13px; opacity: .6; max-width: 280px; }
+  </style>
+</head>
+<body>
+  <div id="container"></div>
+
+  <div id="overlay">
+    <div id="msg">Cargando modelo 3D…</div>
+    <div id="bar-track"><div id="bar-fill"></div></div>
+    <div id="pct">0%</div>
+    <div id="hint">Una vez cargado, apuntá la cámara al marcador.</div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+    import { KTX2Loader } from "three/addons/loaders/KTX2Loader.js";
+    import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
+    import { MindARThree } from "mindar-image-three";
+
+    // ==================== CAMBIAR AQUÍ (por cada objeto nuevo) ====================
+    const TARGET_MIND = "./assets/target.mind";
+    const MODEL_GLB   = "./assets/modelo.glb";
+
+    const MODEL_REAL_SIZE_METERS = 0.28; // tamaño real del objeto, en metros (ej: 0.28 = 28cm)
+    const MODEL_Y_OFFSET   = 0;           // subir/bajar el modelo respecto al marcador (metros)
+    const MODEL_ROTATION_Y = 0;           // girar el modelo sobre su eje vertical (en radianes, ej: Math.PI/2)
+    // ================================================================================
+
+    const overlay = document.getElementById("overlay");
+    const barFill = document.getElementById("bar-fill");
+    const pct = document.getElementById("pct");
+    const msg = document.getElementById("msg");
+
+    const mindarThree = new MindARThree({
+      container: document.querySelector("#container"),
+      imageTargetSrc: TARGET_MIND,
+    });
+    const { renderer, scene, camera } = mindarThree;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+
+    // Iluminación neutra, pensada para que se vean bien colores y texturas
+    // de cualquier tipo de objeto (no es específica de un material o tema)
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.8);
+    dir.position.set(0.5, 1, 0.5);
+    scene.add(dir);
+
+    // Loaders con soporte de compresión (Draco/KTX2/Meshopt)
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.6/");
+
+    const ktx2Loader = new KTX2Loader();
+    ktx2Loader.setTranscoderPath("https://unpkg.com/three@0.160.0/examples/jsm/libs/basis/");
+    ktx2Loader.detectSupport(renderer);
+
+    const gltfLoader = new GLTFLoader();
+    gltfLoader.setDRACOLoader(dracoLoader);
+    gltfLoader.setKTX2Loader(ktx2Loader);
+    gltfLoader.setMeshoptDecoder(MeshoptDecoder);
+
+    const anchor = mindarThree.addAnchor(0);
+
+    gltfLoader.load(
+      MODEL_GLB,
+      (gltf) => {
+        const model = gltf.scene;
+
+        // Normaliza el tamaño al valor real en metros, sin importar
+        // la escala con la que se exportó el modelo desde Blender/Polycam/etc.
+        const box = new THREE.Box3().setFromObject(model);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        const scaleFactor = MODEL_REAL_SIZE_METERS / maxDim;
+        model.scale.setScalar(scaleFactor);
+
+        // Centra el modelo sobre el marcador
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        model.position.sub(center.multiplyScalar(scaleFactor));
+
+        // Ajustes finos opcionales (por objeto)
+        model.position.y += MODEL_Y_OFFSET;
+        model.rotation.y += MODEL_ROTATION_Y;
+
+        anchor.group.add(model);
+        overlay.style.display = "none";
+        mindarThree.start();
+        renderer.setAnimationLoop(() => renderer.render(scene, camera));
+      },
+      (xhr) => {
+        if (xhr.lengthComputable) {
+          const percent = Math.round((xhr.loaded / xhr.total) * 100);
+          barFill.style.width = percent + "%";
+          pct.textContent = percent + "%";
+        }
+      },
+      (error) => {
+        msg.textContent = "No se pudo cargar el modelo 3D.";
+        console.error(error);
+      }
+    );
+  </script>
+</body>
+</html>
